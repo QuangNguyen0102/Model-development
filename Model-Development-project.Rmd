@@ -1,0 +1,291 @@
+---
+title: "Buan 4310 Project 1"
+output: html_document
+date: "2023-10-19"
+---
+The return of the Infinity Stones to their original timelines by Steve Rogers appears to have caused ripples through the timeline. With Tony Stark now in an alternate reality, Stark Enterprises faces new challenges. The company has expanded into financial services but lacks Tony's analytical brilliance for this complex domain.
+
+To aid their entry into this competitive market, Stark Enterprises hopes to build a predictive model that identifies customers prone to financial risk. The model would enable proactive management of credit exposures.
+```{r}
+#loading library
+library(caret)
+library(Tplyr)
+library(tidyverse)
+library(dplyr)
+library(ROSE)
+library(rpart)
+library(rpart.plot)
+library(forecast)
+```
+
+```{r}
+#Import the data set
+credit_33 <- read_csv("credit_fa2023_33.csv")
+head(credit_33)
+```
+In selecting variables for predicting customer credit risk, we have concentrated on both primary and secondary factors that could potentially influence a client's ability to repay a loan.
+
+Primary Variables:
+AMT_INCOME_TOTAL: A client's income is a fundamental metric, as it directly impacts their capacity to meet financial obligations. Higher income may imply a better capability to repay loans.
+AMT_CREDIT: The loan amount is significant because larger loans might carry higher default risks due to the increased financial burden on the client.
+AMT_ANNUITY: The periodic loan payment amount can affect a client's budget and their ability to maintain regular payments.
+DAYS_EMPLOYED: Employment duration can reflect job stability, which in turn suggests consistent income and a lower risk of default.
+NAME_INCOME_TYPE: The income source can illuminate the reliability of income; for example, a permanent employee may have a more stable income compared to a freelancer.
+NAME_EDUCATION_TYPE: Educational attainment can indicate a client's financial literacy and economic stability, potentially affecting their risk profile.
+DAYS_BIRTH: Age can serve as a surrogate for financial experience, with older clients potentially having more stability and financial savvy.
+
+Secondary Variables:
+CNT_FAM_MEMBERS: The number of family members may influence a client's financial responsibilities and hence their repayment capability.
+NAME_CONTRACT_TYPE: Different loan types may exhibit distinct default patterns due to the terms of the loan or the nature of the borrower who chooses a particular loan type.
+REGION_RATING_CLIENT & REGION_RATING_CLIENT_W_CITY: Ratings by region can suggest economic conditions, with certain regions potentially correlating with higher or lower risk of default.
+DAYS_LAST_PHONE_CHANGE: This could indicate personal stability; frequent changes might suggest instability, which could correlate with financial risk.
+
+Data Transformations:
+Income-Credit Ratio (AMT_INCOME_TOTAL/AMT_CREDIT): This ratio may highlight if a client's income is adequate when compared to the loan amount, providing insight into potential financial strain.
+Annuity-Income Ratio (AMT_ANNUITY/AMT_INCOME_TOTAL): This measures the loan's annuity as a percentage of income, helping to understand the loan's impact on the client's finances.
+
+These selected variables and transformations are anticipated to collectively provide a nuanced view of a client's financial situation and help to predict the low-high risk of the customer.
+
+```{r}
+#Data transformation
+credit_33$Income_credit_ratio <- credit_33$AMT_INCOME_TOTAL / credit_33$AMT_CREDIT
+
+credit_33$Annuity_income_ratio <- credit_33$AMT_ANNUITY / credit_33$AMT_INCOME_TOTAL
+```
+
+```{r}
+#Select variables for the data set
+credit_33 <- credit_33[ ,c(3,4,9:11,14,15,18,19,30:32,42,69,70)]
+names(credit_33)
+```
+
+```{r}
+str(credit_33)
+```
+When performing statistical operations that involve character variables, the underlying mechanism often involves an implicit conversion of these characters to factors. To optimize performance and ensure precise control over the results, it is advisable to explicitly convert character variables to factors before using them in such functions. This proactive approach prevents unexpected outcomes and enhances the efficiency of the computations.
+```{r}
+credit_33$NAME_INCOME_TYPE <- as.factor(credit_33$NAME_INCOME_TYPE)
+credit_33$NAME_EDUCATION_TYPE <- as.factor(credit_33$NAME_EDUCATION_TYPE)
+credit_33$NAME_CONTRACT_TYPE <- as.factor(credit_33$NAME_CONTRACT_TYPE)
+credit_33$TARGET <- as.factor(credit_33$TARGET)
+levels(credit_33$TARGET) <- c("Low", "High")
+```
+
+```{r}
+str(credit_33)
+```
+We split the data into training and validation set to avoid overfitting if we use only one data set to predict 
+```{r}
+#Traning-Validation split
+set.seed(567)
+
+train_index <- sample(1:nrow(credit_33), 0.7 * nrow(credit_33))
+valid_index <- setdiff(1:nrow(credit_33), train_index)
+
+train_df <- credit_33[train_index, ]
+valid_df <- credit_33[valid_index, ]
+
+nrow(train_df)
+nrow(valid_df)
+
+names(train_df)
+```
+```{r}
+str(train_df)
+```
+The decision to balance our data set originates from the initial observation that the vast majority of cases (represented by the value 0) are low. Because of the prevalence of the majority class, such an imbalance can bias our prediction model toward prediction low. This imbalance can result in a model with good accuracy for the majority class but poor prediction ability for the minority class (in this case, high), which is our primary concern.
+
+We use balancing approaches to ensure that our model does not develop a natural bias toward predicting low. By creating a data set with more evenly distributed examples of low and hihg, we give our model a greater chance of learning the distinctive characteristics of both classes. This process of balancing is necessary for constructing a robust model that is sensitive to credit risk nuances and can properly anticipate possible defaults, both of which are critical for successful risk management in lending institutions.
+```{r}
+#weighted training df
+train_df_rose <- ROSE(TARGET ~ .,
+                      data = train_df, seed = 567)$data
+table(train_df_rose$TARGET)
+#remove missing value of validation set
+valid_df <- na.omit(valid_df)
+```
+We normalize values to bring them into a common scale, making it easier to compare and analyze data. Normalization also helps to reduce the impact of outliers and improve the accuracy and stability of statistical models.
+```{r}
+#Normalisation
+train_norm <- train_df_rose
+valid_norm <- valid_df
+
+norm_values <- preProcess(train_df_rose[, -c(1)],method = c("center",
+                                                       "scale"))
+str(norm_values)
+train_norm[, -c(1)] <- predict(norm_values,
+                                train_df_rose[, -c(1)])
+
+head(train_norm)
+valid_norm[, -c(1)] <- predict(norm_values,
+                              valid_df[, -c(1)])
+
+head(valid_norm)
+```
+
+```{r}
+#Import test set
+credit_test <- read_csv("credit_test_fa2023_33.csv")
+#Data tranformation
+credit_test$Income_credit_ratio <- credit_test$AMT_INCOME_TOTAL / credit_test$AMT_CREDIT
+
+credit_test$Annuity_income_ratio <- credit_test$AMT_ANNUITY / credit_test$AMT_INCOME_TOTAL
+head(credit_test)
+```
+
+
+```{r}
+#Select variables
+credit_test <- credit_test[ ,c(3,8:10,13,14,17,18,29:31,41,68,69)]
+names(credit_test)
+```
+```{r}
+#Set as factor
+credit_test$NAME_INCOME_TYPE <- as.factor(credit_test$NAME_INCOME_TYPE)
+credit_test$NAME_EDUCATION_TYPE <- as.factor(credit_test$NAME_EDUCATION_TYPE)
+credit_test$NAME_CONTRACT_TYPE <- as.factor(credit_test$NAME_CONTRACT_TYPE)
+```
+
+```{r}
+credit_test_norm <- predict(norm_values, credit_test)
+credit_test_norm 
+```
+We create KNN model and Classification Tree model to compare and see which model will be the best for predict new client finacial risk.
+```{r}
+#KNN model set k = 3
+knn_model_k3 <- caret::knn3(TARGET ~ ., 
+                            data = train_norm, k = 3)
+knn_model_k3
+
+#Predict training set
+knn_pred_k3_train <- predict(knn_model_k3, 
+                             newdata = train_norm[, -c(1)], 
+                             type = "class")
+head(knn_pred_k3_train)
+confusionMatrix(knn_pred_k3_train, as.factor(train_norm[, 1, drop = TRUE]), positive = "High")
+```
+
+
+```{r}
+#Predict validation set
+knn_pred_k3_valid <- predict(knn_model_k3, 
+
+                             newdata = valid_norm[, -c(1)], 
+
+                             type = "class")
+
+head(knn_pred_k3_valid)
+
+confusionMatrix(knn_pred_k3_valid, as.factor(valid_norm[, 1, drop = TRUE]), positive = "High")
+ROSE::roc.curve(valid_norm$TARGET, knn_pred_k3_valid)
+```
+
+```{r}
+#KNN model set k = 5
+knn_model_k5 <- caret::knn3(TARGET ~ ., 
+                            data = train_norm, k = 5)
+knn_model_k5
+#Predict training set
+knn_pred_k5_train <- predict(knn_model_k5, 
+                             newdata = train_norm[, -c(1)], 
+                             type = "class")
+head(knn_pred_k5_train)
+confusionMatrix(knn_pred_k5_train, as.factor(train_norm[, 1, drop = TRUE]), positive = "High")
+```
+
+```{r}
+#Predict validation set
+knn_pred_k5_valid <- predict(knn_model_k5, 
+
+                             newdata = valid_norm[, -c(1)], 
+
+                             type = "class")
+
+head(knn_pred_k5_valid)
+
+confusionMatrix(knn_pred_k5_valid, as.factor(valid_norm[, 1, drop = TRUE]), positive = "High")
+ROSE::roc.curve(valid_norm$TARGET, knn_pred_k5_valid)
+```
+
+```{r}
+#KNN model set k = 7
+knn_model_k7 <- caret::knn3(TARGET ~ ., 
+                            data = train_norm, k = 7)
+knn_model_k7
+
+
+#Predict training set
+knn_pred_k7_train <- predict(knn_model_k7, 
+                             newdata = train_norm[, -c(1)], 
+                             type = "class")
+head(knn_pred_k7_train)
+confusionMatrix(knn_pred_k7_train, as.factor(train_norm[, 1, drop = TRUE]), positive = "High")
+```
+
+```{r}
+# Predict validation set
+knn_pred_k7_valid <- predict(knn_model_k7, 
+
+                             newdata = valid_norm[, -c(1)], 
+
+                             type = "class")
+
+head(knn_pred_k7_valid)
+
+confusionMatrix(knn_pred_k7_valid, as.factor(valid_norm[, 1, drop = TRUE]), positive = "High")
+ROSE::roc.curve(valid_norm$TARGET, knn_pred_k7_valid)
+```
+Looking at the models, we can see that for all KNN models, there is a drop in accuracy from the training set to the validation set. This is indicative of overfitting, as the models are performing significantly better on the data, they were trained on compared to new, unseen data. 
+```{r}
+names(train_df_rose)
+```
+
+```{r}
+#Classification tree
+class_tr <- rpart(TARGET ~.,
+                  data = train_df_rose, method = "class",
+                  maxdepth = 30)
+rpart.plot(class_tr, type = 4)
+```
+
+
+```{r}
+#Predict training set
+class_tr_train_predict <- predict(class_tr, train_df_rose,
+                                  type = "class")
+
+t(t(head(class_tr_train_predict,10)))
+confusionMatrix(class_tr_train_predict, train_df_rose$TARGET, positive = "High")
+```
+```{r}
+#Predict validation set
+class_tr_valid_predict <- predict(class_tr, valid_df,
+                                  type = "class")
+
+t(t(head(class_tr_valid_predict,10)))
+
+confusionMatrix(class_tr_valid_predict, valid_df$TARGET, positive = "High")
+ROSE::roc.curve(valid_norm$TARGET, class_tr_valid_predict)
+```
+In this case, while the KNN models with k=3 and k=5 show higher accuracy on the training set, their accuracy drops considerably on the validation set, and they also have a low Kappa value, indicating they may not be reliable. The k=7 KNN model and the classification tree both show a similar pattern, although the classification tree seems to have less of a drop between training and validation accuracy. 
+The classification tree also has a slightly higher balanced accuracy on the validation set than the KNN models, suggesting it might be more consistent across different levels of the outcome variable.
+
+The classification tree model seems to be the best choice among the ones presented. It shows a less dramatic drop in accuracy between the training and validation sets compared to the KNN models, and it has the highest balanced accuracy in the validation set. This suggests it's better at generalizing to new data, despite its overall lower accuracy compared to the KNN models on the training set. 
+Applying this model to new applicants should efficiently identify high-risk individuals. With this early warning system, the financial institution can better manage credit risk exposure by tweaking loan offerings, interest rates, and mitigation tactics accordingly.
+
+However, it's important to note that even the best model here does not perform particularly well and the accuracy of this model is also not so high. 
+The classification tree model demonstrates moderate predictive ability, with an accuracy slightly above the No Information Rate on the training set, suggesting it performs only marginally better than random chance. The Kappa statistic indicates minimal agreement, and the model's balanced accuracy and AUC values point to a limited capacity to differentiate between 'Low' and 'High' risk classes. A slight decrease in accuracy on the validation set compared to the training set, along with a low Positive Predictive Value, signals potential overfitting, where the model fails to generalize well to new data.
+
+Disparities in sensitivity and specificity across the training and validation sets reveal an imbalance in the model's ability to correctly identify 'High' risk customers compared to 'Low' risk ones. While it predicts 'Low' risk with reasonable accuracy, indicated by a high Negative Predictive Value, it falls short in accurately predicting 'High' risk instances. These shortcomings highlight the need for further model improvement or considering different modeling approaches to achieve a more accurate and balanced predictive performance.
+```{r}
+#Use classification tree to predict the test set since it is the best model
+predicted_credit_test <- predict(class_tr, newdata = credit_test_norm, type = "class")
+predicted_credit_test
+#Probabilities
+predicted_credit_test <- predict(class_tr, newdata = credit_test_norm, type = "prob")
+predicted_credit_test
+```
+Result:
+The classification tree model has been used to predict the credit risk for new customers, labeling each as 'High' or 'Low' risk based on the data. For the first five customers evaluated, the model predicts that customers 1, 2, 4, and 5 are of 'High' risk, while customer 3 is predicted to be 'Low' risk. These labels are determined by the model's analysis of each customer's features, learned during training, to recognize patterns associated with credit risk.
+
+To complement these predictions, the model provides probabilities that indicate its confidence level. For instance, customer 1 has a 59.27% probability of being 'High' risk, suggesting moderate confidence in this prediction. In contrast, customer 3 has a 62.07% probability of being 'Low' risk, showing a stronger confidence in a lower risk of default. These probabilities offer Stark Enterprises a clearer perspective on the potential risk each new customer may carry, which is crucial for informed decision-making in their financial services.
